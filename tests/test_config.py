@@ -27,6 +27,12 @@ def test_env_overrides(monkeypatch):
     assert config['handlers']['stdout']['formatter'] == 'console'
 
 
+def test_celery_chatter_is_quieted():
+    loggers = get_logging_config()['loggers']
+    assert loggers['celery.worker.strategy']['level'] == 'WARNING'
+    assert loggers['celery.app.trace']['level'] == 'WARNING'
+
+
 def test_invalid_format_falls_back_to_json():
     assert get_logging_config(fmt='xml')['handlers']['stdout']['formatter'] == 'json'
 

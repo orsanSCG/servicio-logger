@@ -36,15 +36,41 @@ Todas las claves están **siempre presentes**; si una clave no tiene valor, es `
 
 Loggers especiales que emite el paquete:
 
-* `servicio_logger.access`: una línea por request HTTP, con
-  `extra.http = {method, path, status, duration_ms, ip, user}`. Siempre en nivel INFO; los fallos
-  se filtran por `extra_http_status`.
+* `servicio_logger.access`: una línea por request HTTP (o solo los relevantes, ver
+  [Volumen de logs](#volumen-de-logs)), con
+  `extra.http = {method, path, status, duration_ms, ip, user, slow}`. El nivel depende de la
+  duración: INFO normal, WARNING desde `SERVICIO_LOGGER_ACCESS_SLOW_MS` (`slow="slow"`) y ERROR
+  desde `SERVICIO_LOGGER_ACCESS_VERY_SLOW_MS` (`slow="very_slow"`). Los fallos por status se
+  filtran con `extra_http_status`.
 * `servicio_logger.task`: una línea `Task finished` por tarea de Celery, con
   `extra.task = {name, state, duration_ms, queue, retries}`.
 * `django.request`: solo 5xx (ERROR) con el traceback de la excepción no manejada. Los 4xx se ven
   en `servicio_logger.access`.
 * `celery.app.trace`: las líneas propias de Celery cuando falla una tarea (ERROR, con traceback).
-  Ahora llevan el contexto de la tarea.
+  Ahora llevan el contexto de la tarea. Sus líneas INFO ("received" con los args y "succeeded"
+  con el valor retornado) quedan silenciadas: `servicio_logger.task` ya deja una línea por tarea.
+
+## Volumen de logs
+
+Loguear cada request es lo normal y Loki comprime bien (~10x), pero si el frontend hace polling
+(p.ej. cada 5 s) la mayoría de las líneas son `GET ... 200` repetidos que no aportan. Para eso:
+
+| setting | por defecto | |
+|---|---|---|
+| `SERVICIO_LOGGER_ACCESS_MODE` | `'all'` | `'notable'`: solo genera línea de acceso si status >= 400, si es lento, o si el método escribe (POST/PUT/PATCH/DELETE). Los GET rápidos y exitosos no generan línea. |
+| `SERVICIO_LOGGER_ACCESS_SLOW_MS` | `10000` | Desde esta duración (ms) la línea es WARNING. |
+| `SERVICIO_LOGGER_ACCESS_VERY_SLOW_MS` | `30000` | Desde esta duración (ms) la línea es ERROR. |
+
+En modo `notable` cada request sigue recibiendo `request_id` y el header `X-Request-ID`, así que
+los logs escritos dentro de la vista se pueden correlacionar igual. Las métricas de latencia
+calculadas desde `servicio_logger.access` (p95, etc.) solo ven los requests registrados.
+
+Recomendado: leerlos desde el `.env` para poder cambiar a `'all'` mientras se depura sin tocar código:
+```python
+SERVICIO_LOGGER_ACCESS_MODE = config('LOG_ACCESS_MODE', 'notable')
+SERVICIO_LOGGER_ACCESS_SLOW_MS = config('LOG_ACCESS_SLOW_MS', 10000, cast=int)
+SERVICIO_LOGGER_ACCESS_VERY_SLOW_MS = config('LOG_ACCESS_VERY_SLOW_MS', 30000, cast=int)
+```
 
 ## Variables de entorno
 
@@ -88,7 +114,7 @@ Loggers especiales que emite el paquete:
    sentry_sdk.init(..., server_name=f'<mi-servicio>-{get_component()}')
    ```
    Opcional: `SERVICIO_LOGGER_SKIP_PATHS = ('/health',)` para no generar líneas de acceso en los
-   health checks.
+   health checks, y los settings de [Volumen de logs](#volumen-de-logs).
 
 3. **`dev_settings.py`** (local): `LOGGING = get_logging_config(module='<mi-servicio>', fmt='console')`
 
@@ -171,7 +197,10 @@ anidadas quedan aplanadas con `_` al usar `| json` (`extra.http.status` pasa a `
 # Respuestas 5xx
 {environment="prod"} | json | logger="servicio_logger.access" | extra_http_status >= 500
 
-# Endpoints lentos, latencia p95 por path
+# Requests lentos (WARNING) y muy lentos (ERROR)
+{environment="prod"} | json | logger="servicio_logger.access" | extra_http_slow!=""
+
+# Endpoints lentos, latencia p95 por path (en modo 'notable' solo cuenta los requests registrados)
 quantile_over_time(0.95,
   {environment="prod"} | json | logger="servicio_logger.access" | unwrap extra_http_duration_ms [5m]
 ) by (extra_http_path)
@@ -189,6 +218,7 @@ quantile_over_time(0.95,
 |---|---|---|
 | Tasa de errores por servicio | `sum by (service) (count_over_time({environment="prod"} \| json \| level=~"ERROR\|CRITICAL" [5m]))` | `> 10` |
 | Ráfaga de 5xx | `sum by (service) (count_over_time({environment="prod"} \| json \| logger="servicio_logger.access" \| extra_http_status >= 500 [5m]))` | `> 5` |
+| Requests muy lentos | `sum by (service) (count_over_time({environment="prod"} \| json \| logger="servicio_logger.access" \| extra_http_slow="very_slow" [10m]))` | `> 3` |
 | Fallos de tareas Celery | `sum by (service) (count_over_time({environment="prod"} \| json \| logger="celery.app.trace" \| level="ERROR" [10m]))` | `> 0` |
 | Timeouts de workers de gunicorn | `count_over_time({environment="prod"} \|= "WORKER TIMEOUT" [5m])` | `> 0` |
 

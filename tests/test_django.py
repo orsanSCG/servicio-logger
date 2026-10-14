@@ -2,7 +2,7 @@ import pytest
 
 pytest.importorskip('django')
 
-from django.test import Client  # noqa: E402
+from django.test import Client, override_settings  # noqa: E402
 
 from servicio_logger import log_context  # noqa: E402
 from servicio_logger.config import ACCESS_LOGGER  # noqa: E402
@@ -52,3 +52,54 @@ def test_status_codes(capture):
 def test_skip_paths(capture):
     Client().get('/health')
     assert _by_logger(capture.lines, ACCESS_LOGGER) == []
+
+
+# Umbrales chicos para que los tests corran rápido (las vistas duermen 0.3 s y 0.7 s).
+FAST_THRESHOLDS = {
+    'SERVICIO_LOGGER_ACCESS_SLOW_MS': 200,
+    'SERVICIO_LOGGER_ACCESS_VERY_SLOW_MS': 600,
+}
+
+
+def _access(capture):
+    return [
+        (line['extra']['http']['path'], line['extra']['http']['method'], line['level'], line['extra']['http']['slow'])
+        for line in _by_logger(capture.lines, ACCESS_LOGGER)
+    ]
+
+
+def test_notable_mode_skips_fast_successful_reads(capture):
+    with override_settings(SERVICIO_LOGGER_ACCESS_MODE='notable', **FAST_THRESHOLDS):
+        client = Client(raise_request_exception=False)
+        response = client.get('/ok')
+        client.get('/missing')
+        client.get('/boom')
+        client.post('/ok')
+        client.get('/slow')
+        client.get('/very-slow')
+    assert response['X-Request-ID']  # el request omitido igual tiene id
+    assert _by_logger(capture.lines, 'tests.views')[0]['request_id'] == response['X-Request-ID']
+    assert _access(capture) == [
+        ('/missing', 'GET', 'INFO', None),
+        ('/boom', 'GET', 'INFO', None),
+        ('/ok', 'POST', 'INFO', None),
+        ('/slow', 'GET', 'WARNING', 'slow'),
+        ('/very-slow', 'GET', 'ERROR', 'very_slow'),
+    ]
+
+
+def test_all_mode_also_flags_slowness(capture):
+    with override_settings(SERVICIO_LOGGER_ACCESS_MODE='all', **FAST_THRESHOLDS):
+        client = Client()
+        client.get('/ok')
+        client.get('/slow')
+    assert _access(capture) == [
+        ('/ok', 'GET', 'INFO', None),
+        ('/slow', 'GET', 'WARNING', 'slow'),
+    ]
+
+
+def test_invalid_mode_falls_back_to_all(capture):
+    with override_settings(SERVICIO_LOGGER_ACCESS_MODE='xyz'):
+        Client().get('/ok')
+    assert len(_by_logger(capture.lines, ACCESS_LOGGER)) == 1

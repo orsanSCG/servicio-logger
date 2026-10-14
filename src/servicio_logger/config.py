@@ -32,6 +32,11 @@ QUIET_LOGGERS = (
     'oauthlib',
     'PIL',
     'asyncio',
+    # Celery: "Task ... received" (incluye args) y "Task ... succeeded" (incluye el
+    # valor retornado). En WARNING se mantienen los fallos (ERROR con traceback) y
+    # servicio_logger.task deja una sola línea por tarea.
+    'celery.worker.strategy',
+    'celery.app.trace',
 )
 
 VALID_FORMATS = ('json', 'console')
