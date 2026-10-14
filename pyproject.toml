@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "servicio-logger"
+version = "0.1.0"
+description = "Logging estructurado (JSON) compartido para servicios Django, Celery y gunicorn."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest>=7", "django>=4.2,<5", "celery>=5.3,<6"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Los tests capturan el output de logging por su cuenta; el handler de pytest falla con el test de argumentos inválidos.
+addopts = "-p no:logging"
