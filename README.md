@@ -44,11 +44,48 @@ Loggers especiales que emite el paquete:
   filtran con `extra_http_status`.
 * `servicio_logger.task`: una línea `Task finished` por tarea de Celery, con
   `extra.task = {name, state, duration_ms, queue, retries}`.
+* `servicio_logger.drf`: el motivo de cada respuesta 4xx de Django REST Framework (si se configura
+  el handler, ver [Errores 4xx de DRF](#errores-4xx-de-drf)).
 * `django.request`: solo 5xx (ERROR) con el traceback de la excepción no manejada. Los 4xx se ven
   en `servicio_logger.access`.
 * `celery.app.trace`: las líneas propias de Celery cuando falla una tarea (ERROR, con traceback).
   Ahora llevan el contexto de la tarea. Sus líneas INFO ("received" con los args y "succeeded"
   con el valor retornado) quedan silenciadas: `servicio_logger.task` ya deja una línea por tarea.
+
+## Errores 4xx de DRF
+
+DRF transforma `ValidationError`, `NotFound`, `PermissionDenied`, etc. en respuestas 4xx sin dejar
+nada en el log: la línea de acceso solo dice `POST /api/... 400`. Para saber qué vista respondió, qué
+se le devolvió al cliente y dónde se originó, configurar el handler en los settings:
+
+```python
+REST_FRAMEWORK = {
+    ...
+    'EXCEPTION_HANDLER': 'servicio_logger.drf.log_exception_handler',
+}
+```
+
+La respuesta de la API es exactamente la misma que la del handler por defecto de DRF. Además se
+registra una línea en `servicio_logger.drf` (con el mismo `request_id` que la línea de acceso):
+
+```
+WARNING servicio_logger.drf | LineaViewSet.create respondió 400: organizacion: Este campo es requerido.
+  extra: {"view": "LineaViewSet", "action": "create", "status": 400, "exc_type": "ValidationError",
+          "response": {"organizacion": ["Este campo es requerido."]}, "origin": "app/views.py:120 en create"}
+```
+
+* Nivel INFO para 401/403/404/405 (esperables en el día a día) y WARNING para el resto de los 4xx.
+* `extra.response` es lo que recibió el cliente, recortado a ~2000 caracteres. El body del request
+  **no** se registra (puede contener datos personales o claves).
+* `extra.origin` es el último punto del código del proyecto (fuera de librerías) por donde pasó la
+  excepción. Para errores de serializer apunta a la vista que llamó `is_valid()`.
+* Solo los 4xx poco habituales (p.ej. `Throttled`) incluyen el traceback completo en `stack`.
+* Las vistas que hacen `return Response(errores, status=400)` sin lanzar una excepción no pasan por
+  el handler: ahí conviene registrar el motivo a mano con `logger.warning(..., extra={...})`.
+
+```logql
+{environment="prod"} | json | logger="servicio_logger.drf" | level="WARNING"
+```
 
 ## Volumen de logs
 

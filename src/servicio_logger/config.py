@@ -19,6 +19,7 @@ CONSOLE_FORMATTER = 'servicio_logger.formatters.ConsoleFormatter'
 
 ACCESS_LOGGER = 'servicio_logger.access'
 TASK_LOGGER = 'servicio_logger.task'
+DRF_LOGGER = 'servicio_logger.drf'
 
 # Loggers de terceros demasiado verbosos en INFO.
 QUIET_LOGGERS = (
@@ -100,6 +101,7 @@ def get_logging_config(
         # quedan los 5xx: traen el traceback de la excepción no manejada.
         'django.request': {'handlers': [], 'level': 'ERROR', 'propagate': True},
         ACCESS_LOGGER: {'handlers': [], 'level': 'INFO', 'propagate': True},
+        DRF_LOGGER: {'handlers': [], 'level': 'INFO', 'propagate': True},
     }
     for name in QUIET_LOGGERS:
         config_loggers[name] = {'handlers': [], 'level': 'WARNING', 'propagate': True}
